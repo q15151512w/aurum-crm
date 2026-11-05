@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.aurum.crm</groupId>
+        <artifactId>aurum-crm</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>crm-module-crm</artifactId>
+    <packaging>jar</packaging>
+    <name>crm-module-crm</name>
+    <description>CRM业务模块：线索、客户、商机、合同、产品</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.aurum.crm</groupId>
+            <artifactId>crm-security</artifactId>
+            <version>${revision}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.aurum.crm</groupId>
+            <artifactId>crm-mybatis</artifactId>
+            <version>${revision}</version>
+        </dependency>
+        <!--
+            文件上传要用 system 模块的 OSS 能力（OssStorageService / FileService）。
+            ⚠️ 这是本项目第一个「业务模块之间」的依赖：README 写的依赖方向是
+            server → module-* → framework/*，原有代码（如 SysUserMiniDO）都在刻意避免
+            crm → system。这里为了复用 OSS 配置与封装而引入，方向单一（system 不依赖 crm，无循环）。
+            若以后要消除它，把 OssProperties / OssConfig / OssStorageService 挪到 crm-common 即可。
+        -->
+        <dependency>
+            <groupId>com.aurum.crm</groupId>
+            <artifactId>crm-module-system</artifactId>
+            <version>${revision}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mapstruct</groupId>
+            <artifactId>mapstruct</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

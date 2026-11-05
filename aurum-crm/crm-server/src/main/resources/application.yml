@@ -1,0 +1,164 @@
+# ============================================================================
+#  AurumCRM 主配置
+#  环境相关的配置（数据库密码、Redis 地址等）放在 application-dev.yml
+# ============================================================================
+server:
+  port: 8080
+  servlet:
+    encoding:
+      charset: UTF-8
+      force: true
+  # 生产环境建议开启，本地开发关掉以便看到详细错误
+  error:
+    include-message: always
+    include-stacktrace: never   # ⚠️ 绝不把堆栈返回给前端
+
+spring:
+  application:
+    name: aurum-crm
+  profiles:
+    # 环境由【外部环境变量】控制，服务器上 export SPRING_PROFILES_ACTIVE=prod 即可切换，
+    # 不用改这个文件、不用重新打包。
+    # 不设时默认 dev —— 本地开发和 CI 行为完全不变，不需要任何额外配置。
+    #
+    # ⚠️ 为什么显式写成占位符，而不是依赖 Spring 自动读同名环境变量（那样零改动也能生效）：
+    #    后者会让这个文件读起来像是「prod 根本没法启用」，下一个人得先知道
+    #    Spring 有这个隐式行为才看得懂。写出来是自我说明。
+    #
+    # ⚠️ 不要同时再用命令行 --spring.profiles.active=prod：两个真相来源，
+    #    出问题时最难查的就是「为什么它还是按 dev 起来了」。
+    active: ${SPRING_PROFILES_ACTIVE:dev}
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: GMT+8
+    default-property-inclusion: non_null   # 值为 null 的字段不序列化，减小响应体积
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 100MB
+
+# ============================================================================
+#  MyBatis-Plus
+# ============================================================================
+mybatis-plus:
+  mapper-locations: classpath*:mapper/**/*.xml
+  type-aliases-package: com.aurum.crm.**.dal.dataobject
+  configuration:
+    map-underscore-to-camel-case: true       # customer_name -> customerName
+    cache-enabled: false                     # 关掉二级缓存，避免逻辑删除下的脏读
+    # 开发期打印 SQL，生产必须注释掉
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    banner: false
+    db-config:
+      # ASSIGN_ID：由 MyBatis-Plus 内置的雪花算法生成主键（Long）
+      # 与建表脚本的 BIGINT UNSIGNED 主键对应，非自增，分布式唯一
+      #
+      # ⚠️ 不要改回 input —— input 表示「主键由外部提供，ORM 不生成」，
+      #    那样每次 insert 都必须手动 setXxxId(snowflake.nextId())，
+      #    漏写一处就会插入 null 主键导致 SQL 报错，且很难排查。
+      id-type: ASSIGN_ID
+      logic-delete-field: delFlag            # 逻辑删除字段
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+      update-strategy: not_null              # 更新时忽略 null 字段
+
+# ============================================================================
+#  Sa-Token 认证
+# ============================================================================
+sa-token:
+  token-name: Authorization                  # 前端请求头字段名
+  # 前端约定用 Bearer 前缀时，把下面的 is-read-header 与 token-prefix 一起配置
+  token-prefix: Bearer
+  timeout: 86400                             # 绝对有效期：登录后 24 小时
+  # 无操作失效窗口。-1 = 不限制。
+  # ⚠️ 原来是 1800（30 分钟）。绝对有效期明明是 24 小时，用户感知到的却是 30 分钟 ——
+  #    因为只要 30 分钟没发请求就被判失效，这一行把 timeout 完全盖掉了。
+  #    改成 -1 后由 timeout 单独决定生死：24 小时内只要用过就一直有效。
+  #    要收紧就改成正数秒数（如 28800 = 8 小时）。
+  active-timeout: -1
+  is-concurrent: true                        # 允许同一账号多端登录
+  is-share: false                            # 多端登录各自独立 token
+  token-style: uuid
+  is-log: false
+  is-read-cookie: false                      # 前后端分离，不用 Cookie
+
+# ============================================================================
+#  业务开关
+# ============================================================================
+aurum:
+  auth:
+    captcha:
+      # 登录验证码（接口文档 2.9）—— 随机出一道四则运算题，用户填计算结果。
+      #   true  = /auth/captcha 下发题目，POST /auth/login 必须带 captchaKey + captchaCode
+      #   false = /auth/captcha 返回 {"enabled": false}，前端隐藏验证码行，
+      #           后端登录也不再校验（前端不传这两个字段也不会被参数校验拦下）
+      # 本地调试、演示、写集成测试时可以关掉，免得每次都真的算一遍。
+      enabled: true
+
+# ============================================================================
+#  接口文档 Knife4j
+# ============================================================================
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    tags-sorter: alpha
+    operations-sorter: alpha
+  api-docs:
+    path: /v3/api-docs
+  group-configs:
+    # /auth/** 不属于任何业务模块前缀，不单开一组的话
+    # 10 个认证接口在 Knife4j 里一个都看不到
+    - group: 00-认证
+      paths-to-match: /auth/**
+      packages-to-scan: com.aurum.crm.module.system
+    - group: 01-系统管理
+      paths-to-match: /system/**
+      packages-to-scan: com.aurum.crm.module.system
+    - group: 02-客户管理
+      paths-to-match: /crm/**
+      packages-to-scan: com.aurum.crm.module.crm
+    - group: 03-财务管理
+      paths-to-match: /finance/**
+      packages-to-scan: com.aurum.crm.module.finance
+    - group: 04-审批流
+      paths-to-match: /bpm/**
+      packages-to-scan: com.aurum.crm.module.bpm
+
+knife4j:
+  enable: true
+  setting:
+    language: zh_cn
+
+# ============================================================================
+#  监控
+# ============================================================================
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+  health:
+    # ⚠️ 关掉邮件健康检查。
+    #
+    # 加了 spring-boot-starter-mail 之后，Actuator 会**自动装配**一个 MailHealthIndicator，
+    # 它每次被调用都真的去连一次 SMTP。实测（2026-09-14）：
+    #   WARN MailHealthIndicator (mail) took 17784ms to respond
+    # 也就是每次请求 /actuator/health 都要卡将近 18 秒；而且 SMTP 一挂，
+    # 整个应用的健康状态就被标成 DOWN。
+    #
+    # 这两点都不合理：
+    #   ① 邮件只是「注册/找回密码」这一个功能依赖它，不该拖垮整个服务的健康判定；
+    #   ② 健康检查是用来做存活探针的，不能让它去连一个外部第三方服务。
+    #
+    # 想单独确认邮件通不通，用「发一次验证码」这条真实链路，比健康检查准。
+    mail:
+      enabled: false
+
+logging:
+  level:
+    root: info
+    com.aurum.crm: debug

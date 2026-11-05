@@ -1,0 +1,29 @@
+# ============================================================================
+#  换行符规则
+#
+#  ⚠️ 这不是格式洁癖，是防一类【最难查的故障】。
+#
+#  开发机是 Windows、服务器是 Linux，而本仓库的 core.autocrlf=true ——
+#  意味着 git 检出时会把文本文件转成 CRLF。于是：
+#
+#    · deploy/*.sh  → 服务器上执行报 `bad interpreter: ^M`
+#                      （屏幕上脚本内容看着完全正常）
+#    · deploy/env   → 密码尾部多一个不可见的 \r，MySQL 报 Access denied，
+#                      而屏幕上看起来密码一个字符都不差
+#
+#  这两种症状都会把人引向完全错误的方向（去查解释器、去核对密码），
+#  在集群部署里尤其致命 —— 第二台机器出问题，第一台还是好的，
+#  于是你会怀疑"是不是这台机器的环境不一样"。
+#
+#  下面把这几类文件显式钉成 LF，不再依赖每个开发本地的 autocrlf 设置。
+#  （git 是最后匹配者胜；这里只钉真正会被 CRLF 咬到的文件，其余不动。）
+# ============================================================================
+
+*.sh    text eol=lf
+*.conf  text eol=lf
+
+# deploy/env 与 env.example 没有扩展名，只能按路径匹配。
+# ⚠️ deploy/env 本身【不进 git】（见 .gitignore 的 `deploy/env` 一行），
+#    这里护的是模板 env.example，以及万一有人 force-add 了 env 的情形。
+deploy/env          text eol=lf
+deploy/env.example  text eol=lf

@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.aurum.crm</groupId>
+        <artifactId>aurum-crm</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>crm-server</artifactId>
+    <packaging>jar</packaging>
+    <name>crm-server</name>
+    <description>启动模块：聚合全部业务模块，唯一可执行入口</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.aurum.crm</groupId>
+            <artifactId>crm-module-system</artifactId>
+            <version>${revision}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.aurum.crm</groupId>
+            <artifactId>crm-module-crm</artifactId>
+            <version>${revision}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.aurum.crm</groupId>
+            <artifactId>crm-module-finance</artifactId>
+            <version>${revision}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.aurum.crm</groupId>
+            <artifactId>crm-module-bpm</artifactId>
+            <version>${revision}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.redisson</groupId>
+            <artifactId>redisson-spring-boot-starter</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <finalName>${project.artifactId}</finalName>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <!--
+                    ⚠️ 必须显式指定版本。
+                    本项目用的是 spring-boot-dependencies（BOM），它【只管依赖，不管插件】。
+                    不写 version 时 Maven 会挑仓库里最新的插件版本，导致
+                    「Spring Boot 3.3.5 的应用被 4.x 插件打包」这种版本错配。
+                    （要用 spring-boot-starter-parent 当父 POM 才会自动管理插件版本，
+                      但本项目是多模块 + BOM 模式，所以手动指定。）
+                -->
+                <version>${spring.boot.version}</version>
+                <configuration>
+                    <mainClass>com.aurum.crm.CrmServerApplication</mainClass>
+                    <!-- 只把本项目的类打进 fat jar，依赖放 BOOT-INF/lib -->
+                    <excludes>
+                        <exclude>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                        </exclude>
+                    </excludes>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>repackage</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

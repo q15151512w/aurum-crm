@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.aurum.crm</groupId>
+        <artifactId>aurum-crm</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>crm-module-finance</artifactId>
+    <packaging>jar</packaging>
+    <name>crm-module-finance</name>
+    <description>财务模块：回款、发票、核销</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.aurum.crm</groupId>
+            <artifactId>crm-security</artifactId>
+            <version>${revision}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.aurum.crm</groupId>
+            <artifactId>crm-mybatis</artifactId>
+            <version>${revision}</version>
+        </dependency>
+        <!-- 复用 system 模块的 OSS 能力（导出文件上传），与 crm 模块同法，方向单一无循环 -->
+        <dependency>
+            <groupId>com.aurum.crm</groupId>
+            <artifactId>crm-module-system</artifactId>
+            <version>${revision}</version>
+        </dependency>
+        <!-- 复用 crm 模块的关注（crm_star）与 sys_user 下属遍历（superior_id）能力。
+             StarService 注释已言明回款/发票接入关注只需一行委托，故方向单一、无循环依赖 -->
+        <dependency>
+            <groupId>com.aurum.crm</groupId>
+            <artifactId>crm-module-crm</artifactId>
+            <version>${revision}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.alibaba</groupId>
+            <artifactId>easyexcel</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.mapstruct</groupId>
+            <artifactId>mapstruct</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

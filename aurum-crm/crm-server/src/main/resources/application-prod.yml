@@ -1,0 +1,357 @@
+# ============================================================================
+#  生产环境配置
+#
+#  ⚠️ 本文件【不含任何明文密钥】，全部走 ${环境变量} 占位符，因此可以安全提交到仓库。
+#     真实值放在服务器的 /opt/aurum-crm/conf/env（chmod 600），由 deploy/start.sh
+#     source 后注入 JVM。变量清单见 deploy/env.example。
+#
+#  ⚠️⚠️ **不要在下面任何一行里填真实密码。** 这个文件是进版本库的。
+#      要覆盖某项而不重新打包，有两种方式：
+#        ① 在 env 文件里加同名环境变量（Spring 属性优先级：环境变量 > jar 内 yml）
+#        ② 用 SPRING_ 前缀覆盖任意配置项，如 SPRING_DATASOURCE_URL=...
+#
+#  ⚠️ 关于占位符有没有默认值，判断标准是【缺失时该不该阻塞启动】：
+#      · 数据库/Redis/邮箱/OSS 凭证 —— 没有默认值。缺了直接起不来，这是对的：
+#        带一个空密码跑起来的服务，故障会推迟到第一次登录时才暴露。
+#      · AI 的 api-key —— 有默认值（空）。代码里 AiProperties.usable() 对空 key
+#        返回 false，接口降级返回 5006，其余功能完全正常，不该因为它阻塞整个部署。
+#
+#  ⚠️ Spring Boot 的 profile 文件【不是增量合并】：prod 激活后 application-dev.yml
+#     整个不生效。所以下面必须把数据源、Redis、邮件、OSS、AI 五块【完整重述】一遍，
+#     不能只写和 dev 不同的地方。
+# ============================================================================
+
+# ============================================================================
+#  Web 容器
+# ============================================================================
+server:
+  # ⚠️ 端口做成可覆盖的，因为这台服务器上【已经有别的项目占了 8080】——
+  #    /root/app/xhzb-admin.jar（中州养老）一直在跑，不能杀。
+  #    所以本项目的端口在 env 文件里用 SERVER_PORT 指定，默认值只是兜底。
+  #
+  # ⚠️ 改这里的话，service.sh 的 HEALTH_URL 要同步改（它也是 env 变量）。
+  #    两者不一致的表现是：服务其实起来了，但健康检查一直探测 8080，报启动失败。
+  port: ${SERVER_PORT:8080}
+  # 绑所有网卡，外网可直接访问。
+  # ⚠️ 本项目【没有配 TLS】，登录密码和 Sa-Token 令牌以明文走公网。
+  #    后续接上 Nginx（同机反代 127.0.0.1:<port>）后，应改成 127.0.0.1 并关掉该端口的防火墙规则。
+  address: 0.0.0.0
+
+  # 优雅停机：收到 SIGTERM 后先停止接收新请求，把在途请求处理完再退出。
+  # ⚠️ 构造函数默认是 immediate（立刻关），在途的登录、上传会被直接掐断成连接重置。
+  shutdown: graceful
+
+  servlet:
+    encoding:
+      charset: UTF-8
+      force: true
+  error:
+    # 覆盖 application.yml 里的 always —— 生产环境绝不把异常消息回给前端
+    include-message: never
+    include-stacktrace: never
+
+spring:
+  # ==========================================================================
+  #  停机时序
+  # ==========================================================================
+  lifecycle:
+    # 优雅停机的总闸门：等 HTTP 在途请求，最多等 30 秒。
+    # 必须小于 deploy/stop.sh 里的 STOP_TIMEOUT（120 秒），否则脚本会先动刀。
+    timeout-per-shutdown-phase: 30s
+
+  # ⚠️⚠️ 这一块是最容易漏掉的。
+  #    server.shutdown=graceful 只等【HTTP 请求】，@Scheduled 和 @Async 跑在
+  #    独立的线程池上，不配下面的 await-termination，停机时会被直接丢弃：
+  #      · @Scheduled —— NoticeReminderJob（每天 03:05）扫到一半被杀，可能一半通知发了、一半没发；
+  #      · @Async     —— 操作日志落库、消息通知写一半，留下脏数据。
+  #    await-termination-period 也要小于 STOP_TIMEOUT。
+  task:
+    scheduling:
+      shutdown:
+        await-termination: true
+        await-termination-period: 60s
+    execution:
+      shutdown:
+        await-termination: true
+        await-termination-period: 60s
+
+  # ==========================================================================
+  #  数据源 —— MySQL
+  #
+  #  主机名与端口已占位符化：${DB_HOST} / ${DB_PORT}，**默认 127.0.0.1（同机回环）**。
+  #  做集群时在服务器上的 env 里填真实地址即可，**不用重新打包**。
+  #
+  #  ⚠️ 默认值刻意保持 127.0.0.1，不把具体 IP 写死在这一行：
+  #     本文件是进 git 的，写死会让以后每次 clone 都指向同一台机器；
+  #     而放在 env（不进版本库）里，既能随时改，又不会把部署拓扑泄进仓库。
+  #
+  #  ⚠️ 填地址时的两个坑：
+  #     · 用 IP 而不是 localhost —— Tomcat/MySQL 都监听 IPv4，而 localhost
+  #       可能先解析到 ::1，会对着一个明明活着的服务报 Connection refused。
+  #     · 集群场景优先填【内网 IP】（云控制台「实例详情」里的私有 IP）。
+  #       填公网 IP 意味着流量要出网卡再绕回来，依赖云厂商的 NAT 回环支持，
+  #       还受公网带宽与计费影响 —— 同机场景下是纯粹的绕远路。
+  # ==========================================================================
+  datasource:
+    type: com.alibaba.druid.pool.DruidDataSource
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    # ⚠️ characterEncoding 要填【Java 字符集名】UTF-8，不能填 MySQL 的 utf8mb4，
+    #    否则报 Unsupported character encoding 'utf8mb4'。
+    # ⚠️ 只有 host / port 提成了变量；后面那串 URL 参数【故意写死】：
+    #    它们是正确性关键项，手抄 URL 时漏一个就静默变慢 / 时间差 8 小时 /
+    #    批量插入退化。别图省事把整条 URL 提成一个变量。
+    url: jdbc:mysql://${DB_HOST:127.0.0.1}:${DB_PORT:3306}/crm?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    druid:
+      # ⚠️ dev 里 initial-size=5 而 min-idle=10 是自相矛盾的 ——
+      #    Druid 启动后会立刻把连接补到 min-idle，那个 5 是假的。这里让两者相等。
+      initial-size: 10
+      min-idle: 10
+      max-active: 50
+      max-wait: 60000
+      # 连接有效性检测
+      validation-query: SELECT 1
+      test-while-idle: true
+      test-on-borrow: false
+      test-on-return: false
+      # ⚠️ 下面两项 dev 里没有，不配的话 test-while-idle 和 keep-alive 根本不会触发
+      time-between-eviction-runs-millis: 60000   # 每 60 秒跑一次空闲连接检测
+      min-evictable-idle-time-millis: 300000     # 空闲超过 5 分钟才允许被回收
+      # 保活 min-idle 个连接：回环重建连接成本不高但也不是零（TCP 握手 + MySQL 认证）
+      keep-alive: true
+      # 防连接泄漏：超过 10 分钟未归还则强制回收
+      remove-abandoned: true
+      remove-abandoned-timeout: 600
+      # ⚠️ dev 里没有。开启后连接被强制回收时会【打出申请该连接的堆栈】，
+      #    直接指向漏连接的代码。不改这一项的话 remove-abandoned 只是默默把连接拿走。
+      log-abandoned: true
+      # 慢 SQL 监控（超过 1 秒记录）
+      # ⚠️ 慢 SQL 日志来自这里的 stat filter（走 SLF4J），和下面被关掉的
+      #    mybatis-plus log-impl 无关 —— 关掉 SQL 打印不会失去慢 SQL 可见性。
+      filter:
+        stat:
+          enabled: true
+          log-slow-sql: true
+          slow-sql-millis: 1000
+      # ⚠️ 不要加 filters: stat,wall,log4j 这种写法（博客里到处都是）：
+      #    log4j filter 需要 Spring Boot 3 根本没带的 log4j 绑定，直接启动失败；
+      #    wall filter 会拦下合法的批量插入和 ON DUPLICATE KEY UPDATE。
+
+  # ==========================================================================
+  #  Redis —— 主机名同样占位符化：${REDIS_HOST} / ${REDIS_PORT}，默认 127.0.0.1
+  #
+  #  ⚠️ database 用 2，dev 用的是 0。两边连的是【同一台 Redis】：
+  #    不分库的话，本地 dev 签发的 Sa-Token 在生产会被认可，
+  #    验证码的 key 也会互相覆盖，调试时会出现极其难解释的"登录状态串了"。
+  #
+  #  ⚠️ 真要换成 Redis Cluster 时，database 这一项要先重新考虑：
+  #    Redis Cluster 只有 database 0，多库隔离会直接失效，只能改成 key 前缀隔离。
+  #    届时本行和 service.sh / check-env.sh 里对 database 的假设都要一起改。
+  # ==========================================================================
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      database: 2
+      username: ${REDIS_USERNAME:default}
+      password: ${REDIS_PASSWORD}
+      timeout: 5000ms
+      lettuce:
+        pool:
+          max-active: 32
+          max-idle: 16
+          min-idle: 4
+          max-wait: 3000ms
+
+  # ==========================================================================
+  #  邮件（163 个人邮箱 SMTP）—— 用于注册 / 登录 / 找回密码的邮箱验证码
+  #
+  #  ⚠️ host / port 这类厂商常量写死：它们不会因部署而变，
+  #    做成变量只会多一条配错的途径。
+  #
+  #  ⚠️ password 填的是 163 的【SMTP 授权码】，不是邮箱登录密码。
+  #     用之前必须先在 163 网页版开启 SMTP 服务（设置 → POP3/SMTP/IMAP）——
+  #     服务没开时即使授权码完全正确也一律返回 535，错误信息完全指向"密码错"。
+  #
+  #  ⚠️ 端口 465 是 implicit TLS（连上就是加密的），所以开 ssl.enable 而【关掉 starttls】——
+  #     两者同时开会握手失败。若改用 587，则反过来：ssl 关、starttls 开。
+  # ==========================================================================
+  mail:
+    host: smtp.163.com
+    port: 465
+    # ⚠️ 必须是【完整邮箱地址】。163 用手机号注册的账号，地址就是「手机号@163.com」。
+    #    这个值同时还被 EmailCodeServiceImpl 当作发件人 From 读取
+    #   （163 要求发件人必须与登录账号一致，填别的会被拒）。
+    username: ${MAIL_USERNAME}
+    password: ${MAIL_PASSWORD}
+    default-encoding: UTF-8
+    properties:
+      mail:
+        smtp:
+          auth: true
+          ssl:
+            enable: true
+          starttls:
+            enable: false
+          # 超时都设短一点：发信失败要快速失败，不能把请求线程挂住
+          connectiontimeout: 5000
+          timeout: 5000
+          writetimeout: 5000
+
+# ============================================================================
+#  以下内容【继承自 application.yml，本文件刻意不重复声明】
+#
+#  profile 文件的加载规则是：application.yml（无后缀）永远加载，
+#  再叠加 application-{激活的 profile}.yml，后者覆盖前者。
+#  所以 sa-token / jackson / multipart 这些在基础文件里的配置，prod 下依然生效。
+#
+#  ⚠️ 唯一的例外是 application-dev.yml —— 它的内容是【不会】被 prod 继承的，
+#     所以上面才要把数据源、Redis、邮件、OSS、AI 五块完整重述一遍。
+#
+#  ⚠️ 反过来提醒：正因为基础文件会被继承，【不要在基础文件里放假冒的 dev 值】，
+#     否则 prod 会静默沿用。目前基础文件是干净的，保持这样。
+# ============================================================================
+
+# ============================================================================
+#  MyBatis-Plus —— 只覆盖需要改的那一项
+# ============================================================================
+mybatis-plus:
+  configuration:
+    # ⚠️⚠️ 生产必须关掉 SQL 打印。
+    #
+    #  application.yml 里配的是 StdOutImpl（把所有 SQL 打到 stdout）。这里【不能靠删掉那行】
+    #  来关 —— profile 文件无法"取消"基础配置里的 key。也不能指望 logging.level 压住它：
+    #  StdOutImpl 是直接写 System.out 的，【完全绕过 SLF4J 的日志级别】。
+    #  所以要用 NoLoggingImpl 显式关掉，零开销。
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
+
+# ============================================================================
+#  接口文档 —— 生产环境必须关闭
+#
+#  ⚠️ springdoc 和 knife4j 是【两套独立开关】，只关一个另一个的端点还活着。
+#     knife4j.production 是第三重保险：即使 enable 被谁误改回 true，它也拒绝服务。
+# ============================================================================
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+knife4j:
+  enable: false
+  production: true
+
+# ============================================================================
+#  监控
+# ============================================================================
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      # ⚠️ 覆盖 application.yml 里的 always —— 那个会把数据库、Redis 的连接详情
+      #    暴露在响应体里。部署脚本的健康探针只需要顶层 status，不需要细节。
+      show-details: never
+
+logging:
+  level:
+    root: info
+    # 覆盖 application.yml 里的 debug
+    com.aurum.crm: info
+  # ⚠️ 项目原先【没有任何 logback 配置】，日志只走 console。
+  #    下两行让 Spring Boot 自动挂一个带滚动策略的文件 appender，
+  #    【不需要改代码、不需要加 logback-spring.xml、不需要重新打包】。
+  #
+  #    console appender 保持活跃，所以 service.sh 把 stdout 重定向到的
+  #    logs/console.out 依然有内容 —— 那条排查路径不能被破坏。
+  #
+  # ⚠️ 路径写成 ${LOG_DIR:...} 而不是写死：LOG_DIR 由 service.sh 从【脚本自身的
+  #    位置】推出来（WORK_DIR/logs）再 export 进来。
+  #    好处是整个目录搬到别处只改一处，不用重新打包 —— 这也正是脚本手动部署的前提。
+  #    默认值只是为了「不带脚本裸跑 java -jar」时也能启动。
+  file:
+    name: ${LOG_DIR:/root/CRM/aurum-crm/logs}/crm-server.log
+  logback:
+    rollingpolicy:
+      max-file-size: 100MB
+      max-history: 30
+      # ⚠️ 必须显式设这个上限。Spring Boot 的默认值是【无限】，
+      #    而不设上限的 appender 正是要规避的"日志撑爆磁盘"故障。
+      total-size-cap: 3GB
+      # ⚠️ 必须保持 false：设 true 的话每次重启都会清掉历史日志，
+      #    而崩溃重启循环里最需要的恰恰是上一轮的现场。
+      clean-history-on-start: false
+
+# ============================================================================
+#  业务开关
+# ============================================================================
+aurum:
+  auth:
+    captcha:
+      # 生产保持开启（继承 application.yml 的 true，这里显式写出来表明是有意为之）
+      enabled: true
+
+# ============================================================================
+#  阿里云 OSS
+#
+#  ⚠️⚠️ 这四项【缺一即启动失败】—— OssConfig 用 requireText 校验后抛 IllegalStateException。
+#      这是有意设计的：宁可启动时大声失败，也不要带空配置跑起来、
+#      等到用户第一次上传头像时才报错。
+#
+#  ⚠️ 关于为什么写成显式占位符而不是依赖 Spring 的隐式环境变量映射：
+#     OssProperties 绑定的字段名是驼峰 accessKeyId，隐式映射要求变量名叫
+#     OSS_ACCESSKEYID（无下划线分隔）—— 这个名字既没文档又反直觉，
+#     审计配置的人根本对不上。写显式占位符，变量名就白纸黑字在文件里。
+# ============================================================================
+oss:
+  endpoint: ${OSS_ENDPOINT}
+  accessKeyId: ${OSS_ACCESS_KEY_ID}
+  accessKeySecret: ${OSS_ACCESS_KEY_SECRET}
+  bucketName: ${OSS_BUCKET_NAME}
+  # 对象 key 的前缀，最终路径形如 crm/product/2026/09/<uuid>.png
+  dir: ${OSS_DIR:crm/}
+  # ⚠️ 这是【换 CDN / 自定义域名】的开关，不用改代码、不用重新打包。
+  #    留空（默认）= 用 OSS 默认域名 https://{bucket}.{endpoint}/...
+  #    填了 = 文件访问 URL 直接用它作为前缀，例如 https://cdn.example.com
+  urlPrefix: ${OSS_URL_PREFIX:}
+  maxSizeMb: 10
+
+# ============================================================================
+#  AI 小助手（问答 / 工具调用）
+#
+#  ⚠️ 和 OSS 相反，api-key 有【空默认值】：缺了不影响启动，
+#     入口会隐藏、接口返回 5006，其余功能一切正常。
+#     不该因为一个可选的 AI 功能阻塞整个部署。
+# ============================================================================
+ai:
+  enabled: true
+  provider: deepseek
+  # 工具调用最大轮数。到顶后最后一轮不再给工具，逼模型输出自然语言
+  max-tool-rounds: 3
+  max-prompt-chars: 4000
+  # 会话在 Redis 里的保留天数（闲置多久后过期）。
+  # ⚠️ 会话内容含客户名/电话/金额，Redis 又是内存库 —— 这个值同时也是
+  #    「敏感数据在内存里停留多久」，别随手调大。
+  session-ttl-days: 7
+  # 单个会话最多保留多少条消息：既是单个键的体积上限，也是每轮 prompt 长度的上限
+  session-max-messages: 50
+  # 单个工具结果超了就丢行并标记 truncated，避免把上下文吃光
+  tool-result-max-chars: 8000
+  # ⚠️ dev 里没写这一项（一直用的代码默认值 100），这里显式写出来，避免看配置的人以为漏了
+  tool-field-max-chars: 100
+  connect-timeout-ms: 5000
+  # 覆盖「整个流读完」，模型吐完一篇十几秒是正常的
+  read-timeout-ms: 60000
+  providers:
+    deepseek:
+      base-url: https://api.deepseek.com
+      api-key: ${DEEPSEEK_API_KEY:}
+      # ⚠️ 模型 ID 用变量而【不给默认值】：
+      #    dev 里写的 deepseek-flash 存疑（DeepSeek 公开的是 deepseek-chat / deepseek-reasoner），
+      #    给个默认值会把一个错的模型名藏起来。宁可让它显式解析失败，逼你确认一次。
+      model: ${AI_MODEL}
+      # 偏低：这个助手主要任务是查数，要的是参数稳定而不是发挥
+      temperature: 0.3
+      max-tokens: 2048

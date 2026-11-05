@@ -1,0 +1,61 @@
+# ===== Maven =====
+target/
+!.mvn/wrapper/maven-wrapper.jar
+*.jar
+*.war
+*.class
+dependency-reduced-pom.xml
+
+# ===== IDE =====
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+*.swp
+
+# ===== 日志 =====
+logs/
+*.log
+
+# ===== 系统 =====
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===== 本地配置（含密码，绝不提交）=====
+application-local.yml
+application-prod.yml
+# ⚠️ 生产配置【反选放行】，必须放在上面的忽略行之后（gitignore 最后匹配者胜）。
+#
+# 早先这里是直接忽略 application-prod.yml 的，前提假设是「prod 配置 = 一堆明文密钥」。
+# 现在这个假设已经不成立：application-prod.yml 里的凭证【全部】是 ${环境变量} 占位符，
+# 真实值放在服务器的 /root/CRM/aurum-crm/env（chmod 600，不进仓库）。
+# 文件本身零密钥，可以安全提交。
+#
+# 继续忽略它的后果不是"少一个文件"，而是：别人 clone 下来起不了 prod，
+# 而报错是 "profile 'prod' not found"，完全指不到真正的原因。
+#
+# ⚠️ 因此有一条硬性纪律：**永远不要往 application-prod.yml 里填真实密码。**
+#    要覆盖配置，加环境变量，或者用 SPRING_ 前缀（如 SPRING_DATASOURCE_URL=...）。
+!application-prod.yml
+*-local.yml
+
+# ===== 部署时的密钥文件 =====
+# deploy/env.example 是模板（全是占位符，可以提交）；
+# deploy/env 是填好真值的那份，【绝对不能进仓库】。
+# 这一行是防止有人图省事，在本地把填好的 env 直接留在 deploy/ 目录里。
+#
+# ⚠️ 用 `env*` 而不是 `env`：只写 `env` 是【精确匹配】，
+#    `cp env env.bak` 出来的 env.bak 不在忽略范围里 —— 而它同样是明文凭证，
+#    一次 `git add -A` 就进仓库了。2026-09-15 改 env 时踩到过。
+#    改配置前先备份是好习惯，所以这里要防的是「备份动作本身」，
+#    不是要求大家别备份。
+deploy/env*
+!deploy/env.example
+
+# service.sh 运行时产生的并发锁文件，无意义，不该提交
+.service.lock
+
+# ===== 本地临时脚本/截图（曾含敏感信息，禁止提交）=====
+.tmp-shots/

@@ -1,0 +1,160 @@
+# ============================================================================
+#  开发环境配置
+#  ⚠️ 生产环境请用环境变量或配置中心覆盖，不要把密码提交到仓库
+# ============================================================================
+spring:
+  datasource:
+    type: com.alibaba.druid.pool.DruidDataSource
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    # ⚠️ characterEncoding 要填【Java 字符集名】UTF-8，不能填 MySQL 的 utf8mb4，
+    #    否则报 Unsupported character encoding 'utf8mb4'。
+    #    Connector/J 8.x 会自动把 UTF-8 映射到服务端的 utf8mb4。
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/crm?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    druid:
+      initial-size: 5
+      min-idle: 10
+      max-active: 50
+      max-wait: 60000
+      # 连接有效性检测
+      validation-query: SELECT 1
+      test-while-idle: true
+      test-on-borrow: false
+      test-on-return: false
+      # 防连接泄漏：超过 10 分钟未归还则强制回收
+      remove-abandoned: true
+      remove-abandoned-timeout: 600
+      # 慢 SQL 监控（超过 1 秒记录）
+      filter:
+        stat:
+          enabled: true
+          log-slow-sql: true
+          slow-sql-millis: 1000
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: 6379
+      database: 0
+      username: ${REDIS_USERNAME}
+      password: ${REDIS_PASSWORD}
+      timeout: 5000ms
+      lettuce:
+        pool:
+          max-active: 16
+          max-idle: 8
+          min-idle: 2
+          max-wait: 3000ms
+
+  # ==========================================================================
+  #  邮件（163 个人邮箱 SMTP）—— 用于注册 / 登录 / 找回密码的邮箱验证码
+  #
+  #  ⚠️ password 填的是 163 的【SMTP 授权码】，不是邮箱登录密码。
+  #     获取路径：163 邮箱网页版 → 设置 → POP3/SMTP/IMAP → 开启 SMTP 服务 → 生成授权码
+  #
+  #  ⚠️ 端口 465 是 implicit TLS（连上就是加密的），所以开 ssl.enable 而【关掉 starttls】——
+  #     两者同时开会握手失败。若改用 587，则反过来：ssl 关、starttls 开。
+  #
+  #  ⚠️ 关于「凭证直接写在配置里」：这是本项目**有意选择**的做法。
+  #     多人协作同一个仓库，凭证写在这里所有人拉下来就能跑；
+  #     改成环境变量的话，每个人还要各自配一遍、漏配的人启动即报错。
+  #     代价是这些凭证会进版本库 —— 所以：**仓库必须保持私有**，
+  #     一旦要开源/对外交付，先把数据库、Redis、OSS、邮箱这四处全部换成占位符。
+  # ==========================================================================
+  mail:
+    host: smtp.163.com
+    port: 465
+    # ⚠️ 用户名必须是【完整邮箱地址】，不能填手机号 —— 163 用手机号注册的账号，
+    #    地址就是「手机号@163.com」。
+    username: ${MAIL_USERNAME}
+    # ⚠️ 这是 163 的 SMTP 授权码（已脱敏）—— 填登录密码会 535。
+    #
+    # ⚠️⚠️ 用之前**必须先在 163 网页版开启 SMTP 服务**（设置 → POP3/SMTP/IMAP）。
+    #    这一点极其隐蔽：服务没开时，即使授权码完全正确，认证也一律返回
+    #    「535 Error: authentication failed」—— 错误信息完全指向「密码错」，
+    #    于是会一直去核对授权码，而真正的原因在网页版的开关上。
+    #    2026-09-14 本项目就在这上面卡了一轮，最后用 openssl 直连 SMTP 才确认是账号侧问题。
+    #    排查方法见 README 的「常见问题」。
+    #
+    # 凭证直接写在这里，理由同本块开头（团队约定，仓库保持私有）。
+    #
+    # ⚠️ 2026-09-15 更新：换到 <邮箱已脱敏>。上一账号 <邮箱已脱敏> 的
+    #    授权码（已脱敏）经 openssl 直连实测返回 535 已失效，
+    #    账号本人重新提供了新邮箱 + 新授权码，openssl 直连验证 235 通过。
+    #    ⚠️ 163 每重置一次授权码，**旧的立即失效** —— 换码后必须重启后端才生效。
+    password: ${MAIL_PASSWORD}
+    default-encoding: UTF-8
+    properties:
+      mail:
+        smtp:
+          auth: true
+          ssl:
+            enable: true
+          starttls:
+            enable: false
+          # 超时都设短一点：发信失败要快速失败，不能把请求线程挂住
+          connectiontimeout: 5000
+          timeout: 5000
+          writetimeout: 5000
+
+  # ⚠️ 发件人地址不在这里配：代码直接取 spring.mail.username 作为 From
+  #    （163 要求发件人必须与登录账号一致，填别的会被拒）。
+  #    曾短暂存在过一个顶层 `mail.from` 配置项，但没有任何代码读它 —— 属于死配置，
+  #    改它不会生效，只会误导排查的人。已删除。
+
+# ============================================================================
+#  分布式锁说明
+#  redisson-spring-boot-starter 会自动读取【上面 spring.data.redis.*】的配置，
+#  不需要（也没有）redisson.single-server-config 这类配置项。
+#  领取客户/线索的并发控制直接用注入的 RedissonClient 即可：
+#
+#      @Autowired RedissonClient redissonClient;
+#      RLock lock = redissonClient.getLock("crm:customer:claim:" + customerId);
+#
+#  若想让锁与会话用不同的 Redis 库，需要自己写 @Bean 覆盖 RedissonClient，
+#  不能靠 yml 配置实现。
+# ============================================================================
+
+# oss的配置，要根据自己实际情况来进行修改
+oss:
+  endpoint: oss-cn-chengdu.aliyuncs.com
+  accessKeyId: ${OSS_ACCESS_KEY_ID}
+  accessKeySecret: ${OSS_ACCESS_KEY_SECRET}
+  bucketName: qk-files
+
+# ============================================================================
+#  AI 小助手（问答 / 工具调用）
+#
+#  ⚠️ api-key 用环境变量占位符，不要明文提交 —— 本文件开头的警告在这里才算真正落实。
+#     设置方式：环境变量 DEEPSEEK_API_KEY=sk-xxxx（或写进 IDE 的运行配置）
+#     没配也不影响启动：入口会隐藏、接口返回 5006，其余功能一切正常。
+#
+#  想接别的大模型：providers 下再加一段即可（OpenAI / 通义都是 OpenAI 兼容线格式，
+#  只需改 base-url 与 model），然后把 provider 指过去，Java 代码不用动。
+# ============================================================================
+ai:
+  enabled: true
+  provider: deepseek
+  # 工具调用最大轮数。到顶后最后一轮不再给工具，逼模型输出自然语言
+  max-tool-rounds: 3
+  max-prompt-chars: 4000
+  # 会话在 Redis 里的保留天数（闲置多久后过期）。
+  # ⚠️ 会话内容含客户名/电话/金额，Redis 又是内存库 —— 这个值同时也是
+  #    「敏感数据在内存里停留多久」，别随手调大。
+  session-ttl-days: 7
+  # 单个会话最多保留多少条消息：既是单个键的体积上限，也是每轮 prompt 长度的上限
+  session-max-messages: 50
+  # 单个工具结果超了就丢行并标记 truncated，避免把上下文吃光
+  tool-result-max-chars: 8000
+  connect-timeout-ms: 5000
+  # 覆盖「整个流读完」，模型吐完一篇十几秒是正常的
+  read-timeout-ms: 60000
+  providers:
+    deepseek:
+      base-url: https://api.deepseek.com
+      api-key: ${DEEPSEEK_API_KEY}
+      model: deepseek-flash
+      # 偏低：这个助手主要任务是查数，要的是参数稳定而不是发挥
+      temperature: 0.3
+      max-tokens: 2048
